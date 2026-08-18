@@ -2,21 +2,67 @@
 
 import dataclasses
 import math
+import os
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import mode, nn
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_env_file() -> None:
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _resolve_path(env_name: str, default_path: Path) -> Path:
+    raw_value = os.getenv(env_name)
+    if not raw_value:
+        return default_path
+
+    candidate = Path(raw_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = (PROJECT_ROOT / candidate).resolve()
+    return candidate
+
+
+_load_env_file()
+MODEL_PATH = _resolve_path("BDH_MODEL_PATH", Path(__file__).resolve().parent / "parameters" / "bdh_model.pt")
 
 
 @dataclasses.dataclass
 class BDHConfig:
-    n_layer: int = 6
-    n_embd: int = 256
+    n_layer: int = 4#6
+    n_embd: int = 128#256
     dropout: float = 0.1
     n_head: int = 4
-    mlp_internal_dim_multiplier: int = 128
+    mlp_internal_dim_multiplier: int = 32#128
     vocab_size: int = 256
 
+#--> N = n_embd × mlp_internal_dim_multiplier
+#--> params ≈ k × n_embd × N
+#--> param_bytes ≈ params × bytes_per_element
+#--> total_training_param_memory ≈ param_bytes × 4   (roughly, for Adam)
+#--> activation_bytes_per_tensor ≈ batch_size × block_size × N × bytes_per_element
+#--> total_activation_memory ≈ batch_size × block_size × N × bytes_per_element × tensors_per_layer × n_layer
+#--> total_activation_memory_with_checkpointing ≈ batch_size × block_size × N × bytes_per_element × tensors_per_layer
+#--> attention_bytes ≈ batch_size × n_head × block_size² × bytes_per_element
+#--> total_memory ≈ total_training_param_memory + total_activation_memory + attention_bytes + framework_overhead
+#--> 32 × 512 × 32,768 × 4 = 2,147,483,648 bytes
 
 def get_freqs(n, theta, dtype):
     def quantize(t, q=2):
@@ -33,9 +79,9 @@ class Attention(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        nh = config.n_head
-        D = config.n_embd
-        N = config.mlp_internal_dim_multiplier * D // nh
+        nh = config.n_head #define number of attention heads
+        D = config.n_embd #define embedding dimension
+        N = config.mlp_internal_dim_multiplier * D // nh #define internal dimension of the MLP --> look at grah on github
         self.freqs = torch.nn.Buffer(
             get_freqs(N, theta=2**16, dtype=torch.float32).view(1, 1, 1, N)
         )
@@ -55,8 +101,8 @@ class Attention(torch.nn.Module):
 
     def forward(self, Q, K, V):
         assert self.freqs.dtype == torch.float32
-        assert K is Q
-        _, _, T, _ = Q.size()
+        assert K is Q #throws error when K is not equal to Q
+        _, _, T, _ = Q.size() #Q contains the query vectors, T is the sequence length
 
         r_phases = (
             torch.arange(
@@ -153,7 +199,7 @@ class BDH(nn.Module):
     @torch.no_grad()
     def generate(
         self,
-        idx: torch.Tensor,
+        idx: torch.Tensor, #associative memory tensor of the model
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: int | None = None,
@@ -169,3 +215,46 @@ class BDH(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
+
+if __name__ == "__main__":
+    config = BDHConfig()
+    model = BDH(config)
+    print(model)
+
+    MAX_TOKENS = 100
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model.to(device)
+
+    state_dict = torch.load(MODEL_PATH)
+
+
+    state_dict = {
+    k.replace("_orig_mod.", ""):
+    v for k, v in state_dict.items()
+    } 
+
+    model.load_state_dict(state_dict)
+    model.eval() # set model to evaluation mode, disables dropout and other training specific layers
+
+    print("Generating a sample from the model...")
+    prompt = torch.tensor(
+        bytearray("To be or ", "utf-8"), dtype=torch.long, device=device # correct would be "To be or not to be,", let the model predict that
+    ).unsqueeze(0)
+    ret = model.generate(prompt, max_new_tokens=100, top_k=3)
+    ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
+        errors="backslashreplace"
+    )
+    print(ret_decoded)
+    
+    while True:
+        user_prompt = input("\033[36mEnter a prompt (or 'exit' to quit): \033[0m")
+        if user_prompt.lower() == "exit":
+            break
+        prompt = torch.tensor(
+            bytearray(user_prompt, "utf-8"), dtype=torch.long, device=device
+        ).unsqueeze(0)
+        ret = model.generate(prompt, max_new_tokens=100, top_k=3)
+        ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
+            errors="backslashreplace"
+        )
+        print(ret_decoded)
