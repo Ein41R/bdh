@@ -20,9 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # here ~/Dev/pybullet/src/rl/bdh/train.py so PROJECT_ROOT is ~/Dev/pybullet
 
 ### adds environment variables from .env.development file to os.environ
-def _load_env_file() -> None: 
-    # -> function metadata describes that return value is None
-    # doesn't influence function behaviour
+def _load_env_file() -> None:
     env_path = PROJECT_ROOT / ".env.development"
     if not env_path.exists():
         return
@@ -30,27 +28,23 @@ def _load_env_file() -> None:
     for line in env_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
-            # if .strip() fails, stripped is empty, not <empty string> returns True
             continue
         key, value = stripped.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'") 
-        #spaces stripped first allows for e.g. "C:/Program Files" to be indentified with spaces
-        # we can define variables with spaces, double or single quotes
         if key and key not in os.environ:
-            # adds key to environment if not already present
             os.environ[key] = value
 
 # funcion resolves the path
 def _resolve_path(env_name: str, default_path: Path) -> Path:
     raw_value = os.getenv(env_name)
     if not raw_value:
-        return default_path #returns default if env var is empty/undefined
+        return default_path
 
-    candidate = Path(raw_value).expanduser() #expands ~ to home directory
-    if not candidate.is_absolute(): #adds root if path is relative
+    candidate = Path(raw_value).expanduser()
+    if not candidate.is_absolute():
         candidate = (PROJECT_ROOT / candidate).resolve()
-    return candidate #returns absolute path
+    return candidate
 
 
 _load_env_file()
@@ -75,9 +69,8 @@ ctx = (
     torch.amp.autocast(device_type=device.type, dtype=ptdtype)
     if "cuda" in device.type
     else nullcontext()
-) # does nothing if no nvidia device, otherwise enables mixed precision training for faster computation and lower memory usage.
-
-# scaler does scalar scaling of gradients to prevent underflow in flaot16 used in combination with amp.autocast
+) 
+# "automatic mixed precision", uses scaling to prevent underflow
 scaler = torch.amp.GradScaler(device=device.type, enabled=(dtype == "float16"))
 torch.manual_seed(1337)
 torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
@@ -100,7 +93,7 @@ MODEL_PATH = _resolve_path("BDH_MODEL_PATH", Path(__file__).resolve().parent / "
 
 # Fetch the tiny Shakespeare dataset
 def fetch_data():
-    if not INPUT_FILE_PATH.exists(): #if no trainng text given.
+    if not INPUT_FILE_PATH.exists():
         data_url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
         INPUT_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(INPUT_FILE_PATH, "w", encoding="utf-8") as f:
@@ -111,11 +104,10 @@ def get_batch(split):
     # treat the file as bytes
     data = np.memmap(INPUT_FILE_PATH, dtype=np.uint8, mode="r")
     if split == "train":
-        data = data[: int(0.9 * len(data))] #rabdomly select 90% of the data for training
+        data = data[: int(0.9 * len(data))]
     else:
-        data = data[int(0.9 * len(data)) :] #use the remaining 10% for validation
+        data = data[int(0.9 * len(data)) :]
     ix = torch.randint(len(data) - BLOCK_SIZE, (BATCH_SIZE,))
-    #ix is the starting index of each sequence. 
     x = torch.stack(
         [torch.from_numpy((data[i : i + BLOCK_SIZE]).astype(np.int64)) for i in ix]
     )
@@ -125,9 +117,7 @@ def get_batch(split):
             for i in ix
         ]
     )
-    #cuda performance optimization, pin memory allows for faster transfer to GPU
     if torch.cuda.is_available():
-        # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
             device, non_blocking=True
         )
@@ -143,9 +133,9 @@ def eval(model):
 if __name__ == "__main__":
     fetch_data()
 
-    model = bdh.BDH(BDH_CONFIG).to(device) #.to(device) converts from torch tensor to device/cuda tensor
-    model = torch.compile(model) # make torch faster
-    optimizer = torch.optim.AdamW( # Adam optimizer, finds location of minimum loss faster.
+    model = bdh.BDH(BDH_CONFIG).to(device)
+    model = torch.compile(model)
+    optimizer = torch.optim.AdamW(
         model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
     )
 
@@ -154,30 +144,28 @@ if __name__ == "__main__":
     loss_acc = 0
     loss_steps = 0
     for step in range(MAX_ITERS):
-        optimizer.zero_grad(set_to_none=True) #performance optimization sets gradients to none instead of zero to save memory
+        optimizer.zero_grad(set_to_none=True)
 
-        with ctx: # uses automatic mixed precision if available.
-            logits, loss = model(x, y) #otherwise runs operation without amp (or with nullcontext())
-        x, y = get_batch("train") # get radomt 9/1 training to validation split of data for next iteration
-        loss_acc += loss #add loss to loss accumulator for logging
-        loss_steps += 1 # increment step counter
+        with ctx:
+            logits, loss = model(x, y)
+        x, y = get_batch("train")
+        loss_acc += loss
+        loss_steps += 1
 
-        # scalar prevents float underflow
-        # scalar manages scaling of gradients therefore adam is called through scalar 
-        scaler.scale(loss).backward() # scale the loss and compute gradients
-        scaler.step(optimizer) # update params with adam ykyk
-        scaler.update() # updates scaling factor for next iteration
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
 
-        if step % LOG_FREQ == 0: # log every LOG_FREQ steps aka every 100 of 2300 i think
+        if step % LOG_FREQ == 0:
             print(f"Step: {step}/{MAX_ITERS} loss {loss_acc.item() / loss_steps:.3}")
-            loss_acc = 0 #reset accumulated loss
-            loss_steps = 0 #reset step counter
+            loss_acc = 0
+            loss_steps = 0
 
     print("Training done, now generating a sample ")
-    model.eval() # set model to evaluation mode, disables dropout and other training specific layers
+    model.eval() 
     prompt = torch.tensor(
-        bytearray("To be or ", "utf-8"), dtype=torch.long, device=device # correct would be "To be or not to be,", let the model predict that
+        bytearray("To be or ", "utf-8"), dtype=torch.long, device=device 
     ).unsqueeze(0)
     ret = model.generate(prompt, max_new_tokens=100, top_k=3)
     ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
@@ -186,4 +174,4 @@ if __name__ == "__main__":
     print(ret_decoded)
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), MODEL_PATH) # save the model to disk
+    torch.save(model.state_dict(), MODEL_PATH)
