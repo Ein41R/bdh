@@ -85,7 +85,6 @@ torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
 print(f"Using device: {device} with dtype {dtype}")
 
 
-# Configuration adjusted to barely work on my PC.
 BDH_CONFIG = bdh.BDHConfig()
 BLOCK_SIZE = 512
 BATCH_SIZE = 32
