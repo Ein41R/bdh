@@ -16,34 +16,41 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device=torch.device('mps')
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# here ~/Dev/pybullet/src/rl/bdh/train.py so PROJECT_ROOT is ~/Dev/pybullet
 
-
-def _load_env_file() -> None:
-    env_path = PROJECT_ROOT / ".env"
+### adds environment variables from .env.development file to os.environ
+def _load_env_file() -> None: 
+    # -> function metadata describes that return value is None
+    # doesn't influence function behaviour
+    env_path = PROJECT_ROOT / ".env.development"
     if not env_path.exists():
         return
 
     for line in env_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
+            # if .strip() fails, stripped is empty, not <empty string> returns True
             continue
         key, value = stripped.split("=", 1)
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        value = value.strip().strip('"').strip("'") 
+        #spaces stripped first allows for e.g. "C:/Program Files" to be indentified with spaces
+        # we can define variables with spaces, double or single quotes
         if key and key not in os.environ:
+            # adds key to environment if not already present
             os.environ[key] = value
 
-
+# funcion resolves the path
 def _resolve_path(env_name: str, default_path: Path) -> Path:
     raw_value = os.getenv(env_name)
     if not raw_value:
-        return default_path
+        return default_path #returns default if env var is empty/undefined
 
-    candidate = Path(raw_value).expanduser()
-    if not candidate.is_absolute():
+    candidate = Path(raw_value).expanduser() #expands ~ to home directory
+    if not candidate.is_absolute(): #adds root if path is relative
         candidate = (PROJECT_ROOT / candidate).resolve()
-    return candidate
+    return candidate #returns absolute path
 
 
 _load_env_file()
@@ -78,7 +85,7 @@ torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
 print(f"Using device: {device} with dtype {dtype}")
 
 
-# Configuration
+# Configuration adjusted to barely work on my PC.
 BDH_CONFIG = bdh.BDHConfig()
 BLOCK_SIZE = 512
 BATCH_SIZE = 32
@@ -108,6 +115,7 @@ def get_batch(split):
     else:
         data = data[int(0.9 * len(data)) :] #use the remaining 10% for validation
     ix = torch.randint(len(data) - BLOCK_SIZE, (BATCH_SIZE,))
+    #ix is the starting index of each sequence. 
     x = torch.stack(
         [torch.from_numpy((data[i : i + BLOCK_SIZE]).astype(np.int64)) for i in ix]
     )
@@ -117,6 +125,7 @@ def get_batch(split):
             for i in ix
         ]
     )
+    #cuda performance optimization, pin memory allows for faster transfer to GPU
     if torch.cuda.is_available():
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
@@ -145,19 +154,26 @@ if __name__ == "__main__":
     loss_acc = 0
     loss_steps = 0
     for step in range(MAX_ITERS):
-        optimizer.zero_grad(set_to_none=True)
-        with ctx: # when context is nullcontext skips. otherwise loads the model in amp mode.
-            logits, loss = model(x, y)
-        x, y = get_batch("train") # if splitting enabled
+        optimizer.zero_grad(set_to_none=True) #performance optimization sets gradients to none instead of zero to save memory
+
+        with ctx: # uses automatic mixed precision if available.
+            logits, loss = model(x, y) #otherwise runs operation without amp (or with nullcontext())
+        x, y = get_batch("train") # get radomt 9/1 training to validation split of data for next iteration
         loss_acc += loss #add loss to loss accumulator for logging
         loss_steps += 1 # increment step counter
+
+        # scalar prevents float underflow
+        # scalar manages scaling of gradients therefore adam is called through scalar 
         scaler.scale(loss).backward() # scale the loss and compute gradients
         scaler.step(optimizer) # update params with adam ykyk
-        scaler.update() #since scalar isnt constant, update it
+        scaler.update() # updates scaling factor for next iteration
+
+
         if step % LOG_FREQ == 0: # log every LOG_FREQ steps aka every 100 of 2300 i think
             print(f"Step: {step}/{MAX_ITERS} loss {loss_acc.item() / loss_steps:.3}")
             loss_acc = 0 #reset accumulated loss
             loss_steps = 0 #reset step counter
+
     print("Training done, now generating a sample ")
     model.eval() # set model to evaluation mode, disables dropout and other training specific layers
     prompt = torch.tensor(
