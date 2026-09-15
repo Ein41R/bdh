@@ -9,12 +9,11 @@ import torch
 import torch.nn.functional as F
 from torch import mode, nn
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_env_file() -> None:
-    env_path = PROJECT_ROOT / ".env"
+    env_path = PROJECT_ROOT / ".env.development"
     if not env_path.exists():
         return
 
@@ -75,8 +74,8 @@ def get_freqs(n, theta, dtype):
     )
 
 
-class Attention(torch.nn.Module):
-    def __init__(self, config):
+class Attention(torch.nn.Module): #Overwrite attention mechanism to use RoPE
+    def __init__(self, config): #setup configuration
         super().__init__()
         self.config = config
         nh = config.n_head #define number of attention heads
@@ -87,7 +86,7 @@ class Attention(torch.nn.Module):
         )
 
     @staticmethod
-    def phases_cos_sin(phases):
+    def phases_cos_sin(phases): #define function to compute phase
         phases = (phases % 1) * (2 * math.pi)
         phases_cos = torch.cos(phases)
         phases_sin = torch.sin(phases)
@@ -95,16 +94,16 @@ class Attention(torch.nn.Module):
 
     @staticmethod
     def rope(phases, v):
-        v_rot = torch.stack((-v[..., 1::2], v[..., ::2]), dim=-1).view(*v.size())
+        v_rot = torch.stack((-v[..., 1::2], v[..., ::2]), dim=-1).view(*v.size()) #90deg rotation 
         phases_cos, phases_sin = Attention.phases_cos_sin(phases)
-        return (v * phases_cos).to(v.dtype) + (v_rot * phases_sin).to(v.dtype)
+        return (v * phases_cos).to(v.dtype) + (v_rot * phases_sin).to(v.dtype) #returns v rotated by the phases 
 
-    def forward(self, Q, K, V):
+    def forward(self, Q, K, V): ##!!!! Q,K are sequences of vectors, not single standalone vectos
         assert self.freqs.dtype == torch.float32
         assert K is Q #throws error when K is not equal to Q
         _, _, T, _ = Q.size() #Q contains the query vectors, T is the sequence length
 
-        r_phases = (
+        r_phases = ( #calculate phases depending on the freqs
             torch.arange(
                 0,
                 T,
@@ -112,11 +111,11 @@ class Attention(torch.nn.Module):
                 dtype=self.freqs.dtype,
             ).view(1, 1, -1, 1)
         ) * self.freqs
-        QR = self.rope(r_phases, Q)
-        KR = QR
+        QR = self.rope(r_phases, Q) #sets QR torope
+        KR = QR #sets KR to QR
 
         # Current attention
-        scores = (QR @ KR.mT).tril(diagonal=-1)
+        scores = (QR @ KR.mT).tril(diagonal=-1)# eliminates self attention
         return scores @ V
 
 
@@ -125,9 +124,11 @@ class BDH(nn.Module):
         super().__init__()
         assert config.vocab_size is not None
         self.config = config
-        nh = config.n_head
-        D = config.n_embd
-        N = config.mlp_internal_dim_multiplier * D // nh
+        nh = config.n_head #nh = number of attention heads
+        D = config.n_embd # D =embedding dimension (D << N // manifold dimension)
+        N = config.mlp_internal_dim_multiplier * D // nh # N = internal dimension of the MLP
+
+        #initialize D/E with normal distribution around 0 with std deviation 0.02
         self.decoder = nn.Parameter(torch.zeros((nh * N, D)).normal_(std=0.02))
         self.encoder = nn.Parameter(torch.zeros((nh, D, N)).normal_(std=0.02))
 
@@ -183,11 +184,11 @@ class BDH(nn.Module):
 
             xy_sparse = self.drop(xy_sparse)
 
-            yMLP = (
+            yMLP = ( #calculates the output of the MLP layer
                 xy_sparse.transpose(1, 2).reshape(B, 1, T, N * nh) @ self.decoder
             )  # B, 1, T, D
             y = self.ln(yMLP)
-            x = self.ln(x + y)
+            x = self.ln(x + y) #residual connection
 
         logits = x.view(B, T, D) @ self.lm_head
         loss = None
@@ -202,21 +203,21 @@ class BDH(nn.Module):
         idx: torch.Tensor, #associative memory tensor of the model
         max_new_tokens: int,
         temperature: float = 1.0,
-        top_k: int | None = None,
+        top_k: int | None = None, # top_k is the number of highest probability vocabulary tokens to keep for sampling. If set to None, no filtering is applied.
     ) -> torch.Tensor:
         for _ in range(max_new_tokens):
             idx_cond = idx
-            logits, _ = self(idx_cond)
+            logits, _ = self(idx_cond) #calculate logits for the current sequence
             logits = logits[:, -1, :] / temperature
             if top_k is not None:
                 values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < values[:, [-1]]] = float("-inf")
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
+            probs = F.softmax(logits, dim=-1) #creates prob distribution
+            idx_next = torch.multinomial(probs, num_samples=1) #samples token from probs
+            idx = torch.cat((idx, idx_next), dim=1) #concatenates the new token to the existing sequence
         return idx
 
-if __name__ == "__main__":
+if __name__ == "__main__": # when run, starts testing the model on user prompt
     config = BDHConfig()
     model = BDH(config)
     print(model)
