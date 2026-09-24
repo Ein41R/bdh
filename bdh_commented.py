@@ -190,7 +190,7 @@ class BDH(nn.Module):
             y = self.ln(yMLP)
             x = self.ln(x + y) #residual connection
 
-        logits = x.view(B, T, D) @ self.lm_head
+        logits = x.view(B, T, D) @ self.lm_head #logits are the raw predictions of the model before applying softmax
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
@@ -235,7 +235,7 @@ if __name__ == "__main__": # when run, starts testing the model on user prompt
     } 
 
     model.load_state_dict(state_dict)
-    model.eval() # set model to evaluation mode, disables dropout and other training specific layers
+    model.eval() # set model to evaluation mode, disablessrc/rl/bdh/train.py dropout and other training specific layers
 
     print("Generating a sample from the model...")
     prompt = torch.tensor(
