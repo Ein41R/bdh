@@ -192,7 +192,7 @@ class BDH(nn.Module):
 
         logits = x.view(B, T, D) @ self.lm_head #logits are the raw predictions of the model before applying softmax
         loss = None
-        if targets is not None:
+        if targets is not None: #targets is the ground truth labels for the input data, used to calculate the loss during training
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
