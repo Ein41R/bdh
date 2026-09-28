@@ -139,7 +139,7 @@ class BDH(nn.Module):
         self.encoder_v = nn.Parameter(torch.zeros((nh, D, N)).normal_(std=0.02))
 
         self.lm_head = nn.Parameter(
-            torch.zeros((D, config.vocab_size)).normal_(std=0.02)
+            torch.zeros((D,config.vocab_size)).normal_(std=0.02)
         )
 
         self.apply(self._init_weights)
