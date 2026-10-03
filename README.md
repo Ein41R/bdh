@@ -47,5 +47,5 @@ It was only then that I learned that the core problem was the representation col
 
 University is starting soon and I am running out of time, pressured by time and frustration, instead of doing proper research, I stopped coding and went on to let GLM lecture me about JEPA. There I found out about VICReg and hoplefully I will see if this approach finally leads us to a model capable of learning meaningful information.
 
-My Name is Einar and I will be back real soon with great news.
-Until then, may your skies be Blue and your winds be low.
+> **My Name is Einar and I will be back real soon with great news.
+> Until then, may your skies be Blue and your winds be low.**
