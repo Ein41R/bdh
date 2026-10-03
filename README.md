@@ -43,4 +43,9 @@ Despite the attention, there was no visible change in the models output. Further
 
 This time I ended up with dozens of "\x00" as model output. Since the only zero I was aware of was the padding, I tried to find the perfect padding. I though maybe having a padding of 0 makes the subsequent prediction 0 too. But that didn't change anything in the model output. Desperately searching for a answer to my questions, I somehow managed to fix the hard limit, which turned out to be the result of the positional embedding, which was trained for a constant sequence size the length of the target sequence. But that didn't fix the zero problem, so I consulted a llm. GLM-5.3 to be precise.
 
-It was only then that I learned that the core problem was the representation collapse.
+It was only then that I learned that the core problem was the representation collapse. The intuition is obviously to use negative pairs, so my Idea was that I should train sequences from the same batch to be similar and punish if embeddings from different batches were similar. But I lacked the knowledge to implement it, my designs would never work. Consulting Deepseek v4 flash, it proposed using torch.einsum to calculate dot products as a similarity metric, essentially treating this as a classification problem where the goal was to classify the batch from the target encoder corresponding to the predictor output. A sound method, which was truly impressing at first, but... It didn't work. At this point I was about to quit, since nothing seemed to work. As I final struggle I threw all at Deepseek no matter the result, it would tweak some things here and there, but the results did not change, in fact it worsened. 
+
+University is starting soon and I am running out of time, pressured by time and frustration, instead of doing proper research, I stopped coding and went on to let GLM lecture me about JEPA. There I found out about VICReg and hoplefully I will see if this approach finally leads us to a model capable of learning meaningful information.
+
+My Name is Einar and I will be back real soon with great news.
+Until then, may your skies be Blue and your winds be low.
