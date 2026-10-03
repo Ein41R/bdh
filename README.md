@@ -46,6 +46,6 @@ This time I ended up with dozens of "\x00" as model output. Since the only zero 
 It was only then that I learned that the core problem was the representation collapse. The intuition is obviously to use negative pairs, so my Idea was that I should train sequences from the same batch to be similar and punish if embeddings from different batches were similar. But I lacked the knowledge to implement it, my designs would never work. Consulting Deepseek v4 flash, it proposed using torch.einsum to calculate dot products as a similarity metric, essentially treating this as a classification problem where the goal was to classify the batch from the target encoder corresponding to the predictor output. A sound method, which was truly impressing at first, but... It didn't work. At this point I was about to quit, since nothing seemed to work. As I final struggle I threw all at Deepseek no matter the result, it would tweak some things here and there, but the results did not change, in fact it worsened. 
 
 University is starting soon and I am running out of time, pressured by time and frustration, instead of doing proper research, I stopped coding and went on to let GLM lecture me about JEPA. There I found out about VICReg and hoplefully I will see if this approach finally leads us to a model capable of learning meaningful information.
-
-> **My Name is Einar and I will be back real soon with great news.
-> Until then, may your skies be Blue and your winds be low.**
+***
+**My Name is Einar and I will be back real soon with great news.
+Until then, may your skies be Blue and your winds be low.**
